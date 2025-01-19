@@ -1,5 +1,7 @@
 import discord
 from discord.ext import commands
+from discord import ui, ButtonStyle
+from discord.ui import Button, View
 import json
 import os
 from dotenv import load_dotenv
@@ -25,6 +27,104 @@ ID_MAPPING = {
     "2221023": {"role": "Section-11", "channel": "section-11"},  # Section 11 student
     # Add more mappings as needed
 }
+
+class VerifyView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+    
+    @discord.ui.button(label="Verify Me", style=ButtonStyle.green, custom_id="verify_button")
+    async def verify_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        try:
+            modal = VerifyModal()
+            await interaction.response.send_modal(modal)
+        except Exception as e:
+            print(f"Button error: {e}")
+            await interaction.response.send_message("An error occurred. Please try again.", ephemeral=True)
+
+class VerifyModal(discord.ui.Modal):
+    def __init__(self):
+        super().__init__(title="Verification")
+        self.id_number = discord.ui.TextInput(
+            label="Enter your ID Number",
+            placeholder="Enter your ID number here...",
+            required=True,
+            min_length=4,
+            max_length=10
+        )
+        self.add_item(self.id_number)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            id_input = str(self.id_number.value)
+            member = interaction.user
+
+            # Check if user already has a section role
+            has_section = False
+            for role in member.roles:
+                if role.name.startswith("Section-"):
+                    await interaction.response.send_message(
+                        f"You are already assigned to {role.name}. You cannot be in multiple sections!",
+                        ephemeral=True
+                    )
+                    return
+
+            if id_input in ID_MAPPING:
+                mapping = ID_MAPPING[id_input]
+                role_name = mapping["role"]
+                channel_name = mapping["channel"]
+                
+                # Get or create role
+                role = discord.utils.get(interaction.guild.roles, name=role_name)
+                if not role:
+                    role = await interaction.guild.create_role(name=role_name)
+                
+                # Assign role
+                await member.add_roles(role)
+                success_message = f"Successfully verified! You have been assigned to {role_name}"
+
+                # Handle channel
+                if channel_name:
+                    channel = discord.utils.get(interaction.guild.channels, name=channel_name)
+                    if not channel:
+                        overwrites = {
+                            interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False),
+                            role: discord.PermissionOverwrite(
+                                read_messages=True,
+                                send_messages=True,
+                                read_message_history=True
+                            )
+                        }
+                        channel = await interaction.guild.create_text_channel(
+                            channel_name,
+                            overwrites=overwrites
+                        )
+                    success_message += f" with access to #{channel_name}"
+
+                await interaction.response.send_message(success_message, ephemeral=True)
+
+                # Try to hide verification channel
+                try:
+                    verification_channel = interaction.channel
+                    await verification_channel.set_permissions(member,
+                        read_messages=False,
+                        send_messages=False
+                    )
+                except:
+                    pass
+
+            else:
+                await interaction.response.send_message(
+                    "Invalid ID number! Please try again with a valid ID.",
+                    ephemeral=True
+                )
+
+        except Exception as e:
+            print(f"Verification error: {e}")
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "An error occurred. Please try again or contact an administrator.",
+                    ephemeral=True
+                )
 
 @bot.event
 async def on_ready():
@@ -55,149 +155,27 @@ async def on_message(message):
     await bot.process_commands(message)
 
 @bot.command()
-async def verify(ctx, id_number: str):
-    print(f"Verify command received: {ctx.author} trying to verify with ID {id_number}")
-    print(f"Available IDs: {list(ID_MAPPING.keys())}")
+@commands.has_permissions(administrator=True)
+async def setup_verification(ctx):
+    """Sets up the verification message with button"""
+    embed = discord.Embed(
+        title="🎓 Student Verification",
+        description=(
+            "Welcome to the server! To get access to your section channels:\n\n"
+            "1. Click the 'Verify Me' button below\n"
+            "2. Enter your Student ID when prompted\n"
+            "3. You'll be automatically assigned to your section\n\n"
+            "**Note:** You can only be in one section at a time."
+        ),
+        color=discord.Color.blue()
+    )
     
-    # Convert ID to string to ensure consistent comparison
-    id_number = str(id_number)
-    
-    # Get the member who used the command
-    member = ctx.author
-
-    # Check if user already has a section role
-    has_section = False
-    section_role = None
-    for role in member.roles:
-        if role.name.startswith("Section-"):
-            has_section = True
-            section_role = role
-            break
-
-    if has_section:
-        error_msg = await ctx.send(f"You are already assigned to {section_role.name}. You cannot be in multiple sections!")
-        await asyncio.sleep(10)
-        try:
-            await error_msg.delete()
-            await ctx.message.delete()
-        except Exception as e:
-            print(f"Could not delete message: {e}")
-        return
-
-    if id_number in ID_MAPPING:
-        mapping = ID_MAPPING[id_number]
-        role_name = mapping["role"]
-        channel_name = mapping["channel"]
-        
-        # Get or create the role
-        role = discord.utils.get(ctx.guild.roles, name=role_name)
-        if role is None:
-            try:
-                print(f"Creating new role: {role_name}")
-                role = await ctx.guild.create_role(name=role_name)
-            except Exception as e:
-                print(f"Could not create role: {e}")
-                await ctx.send("Error: Could not create role. Please contact an administrator.")
-                return
-        
-        try:
-            # Assign the role
-            await member.add_roles(role)
-            
-            # Handle channel permissions if specified
-            if channel_name:
-                channel = discord.utils.get(ctx.guild.channels, name=channel_name)
-                
-                # Create the channel if it doesn't exist
-                if channel is None:
-                    try:
-                        # Create a new text channel in the server
-                        overwrites = {
-                            ctx.guild.default_role: discord.PermissionOverwrite(read_messages=False),
-                            role: discord.PermissionOverwrite(
-                                read_messages=True,
-                                send_messages=True,
-                                read_message_history=True
-                            )
-                        }
-                        
-                        channel = await ctx.guild.create_text_channel(
-                            channel_name,
-                            overwrites=overwrites,
-                            reason=f"Auto-created for {role_name}"
-                        )
-                        print(f"Created new channel: {channel_name}")
-                        response = f"Successfully verified {member.mention}, assigned {role_name} role, and created new channel #{channel_name}!"
-                    except Exception as e:
-                        print(f"Could not create channel: {e}")
-                        response = f"Role assigned but couldn't create channel. Please contact an administrator."
-                else:
-                    try:
-                        # Set permissions for existing channel
-                        await channel.set_permissions(role,
-                            read_messages=True,
-                            send_messages=True,
-                            read_message_history=True
-                        )
-                        response = f"Successfully verified {member.mention} and assigned {role_name} role with access to #{channel_name}!"
-                    except Exception as e:
-                        print(f"Could not set channel permissions: {e}")
-                        response = f"Role assigned but couldn't set channel permissions. Please contact an administrator."
-            else:
-                response = f"Successfully verified {member.mention} and assigned {role_name} role!"
-            
-            # Send response message
-            response_msg = await ctx.send(response)
-            
-            # Try to delete the original command
-            try:
-                await ctx.message.delete()
-            except Exception as e:
-                print(f"Could not delete command message: {e}")
-            
-            # Try to delete the response after 10 seconds
-            try:
-                await asyncio.sleep(10)
-                await response_msg.delete()
-            except Exception as e:
-                print(f"Could not delete response message: {e}")
-
-            # Get the verification channel (current channel where command was used)
-            verification_channel = ctx.channel
-            
-            # Set default permissions for verification channel
-            await verification_channel.set_permissions(ctx.guild.default_role,
-                read_messages=True,    # Everyone can see the channel by default
-                send_messages=True     # Everyone can send messages by default
-            )
-
-            # Only hide the channel from users who have section roles
-            for member in ctx.guild.members:
-                has_section = False
-                for role in member.roles:
-                    if role.name.startswith("Section-"):
-                        has_section = True
-                        break
-                
-                if has_section:
-                    await verification_channel.set_permissions(member,
-                        read_messages=False,
-                        send_messages=False
-                    )
-
-        except discord.Forbidden as e:
-            print(f"Permission error: {e}")
-            await ctx.send("Error: Bot doesn't have required permissions. Please contact an administrator.")
-        except Exception as e:
-            print(f"Error assigning role/channel: {e}")
-            await ctx.send("An error occurred. Please contact an administrator.")
-    else:
-        error_msg = await ctx.send("Invalid ID number!")
-        await asyncio.sleep(10)
-        try:
-            await error_msg.delete()
-        except Exception as e:
-            print(f"Could not delete error message: {e}")
+    try:
+        view = VerifyView()
+        await ctx.send(embed=embed, view=view)
+    except Exception as e:
+        print(f"Setup error: {e}")
+        await ctx.send("Error setting up verification. Please try again.")
 
 @bot.event
 async def on_command_error(ctx, error):
