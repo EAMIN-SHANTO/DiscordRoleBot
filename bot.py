@@ -106,6 +106,16 @@ class VerifyModal(discord.ui.Modal):
                         )
                     success_message += f" with access to #{channel_name}"
 
+                # Update student records
+                record_updated = await update_student_records(
+                    member,
+                    id_input,
+                    role_name
+                )
+                
+                if record_updated:
+                    success_message += "\nYour information has been recorded."
+
                 await interaction.response.send_message(success_message, ephemeral=True)
 
                 # Try to hide verification channel
@@ -419,6 +429,103 @@ async def check_verifications(ctx):
     except Exception as e:
         print(f"Check verifications error: {e}")
         await ctx.send("An error occurred while checking verifications.")
+
+async def update_student_records(member, student_id, section):
+    try:
+        # Clean section name for filename (remove "Section-" prefix)
+        section_number = section.replace("Section-", "")
+        filename = f"students{section_number}.xlsx"
+        
+        # Check if file exists, if not create it with headers
+        if not os.path.exists(filename):
+            wb = openpyxl.Workbook()
+            sheet = wb.active
+            sheet.append(["Discord Username", "Discord ID", "Student ID", "Verification Date", "Status"])
+            wb.save(filename)
+        
+        # Load existing file
+        wb = openpyxl.load_workbook(filename)
+        sheet = wb.active
+        
+        # Check if student ID already exists
+        student_exists = False
+        for row in sheet.iter_rows(min_row=2):
+            if str(row[2].value) == student_id:  # Check Student ID column
+                student_exists = True
+                # Update existing record
+                row[0].value = member.name  # Discord Username
+                row[1].value = str(member.id)  # Discord ID
+                row[4].value = "Active"  # Status
+                break
+        
+        # If student doesn't exist, add new record
+        if not student_exists:
+            from datetime import datetime
+            sheet.append([
+                member.name,  # Discord Username
+                str(member.id),  # Discord ID
+                student_id,  # Student ID
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),  # Verification Date
+                "Active"  # Status
+            ])
+        
+        # Save changes
+        wb.save(filename)
+        print(f"Updated student records in {filename}")
+        return True
+        
+    except Exception as e:
+        print(f"Error updating student records: {e}")
+        return False
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def section_stats(ctx, section_number: str = None):
+    """Shows statistics for a specific section or all sections"""
+    try:
+        if section_number:
+            filenames = [f"students{section_number}.xlsx"]
+        else:
+            # Get all students*.xlsx files
+            filenames = [f for f in os.listdir() if f.startswith("students") and f.endswith(".xlsx")]
+        
+        if not filenames:
+            await ctx.send("No section records found!")
+            return
+        
+        embed = discord.Embed(
+            title="📊 Section Statistics",
+            color=discord.Color.blue()
+        )
+        
+        for filename in filenames:
+            if not os.path.exists(filename):
+                continue
+                
+            wb = openpyxl.load_workbook(filename)
+            sheet = wb.active
+            
+            # Count total and active students
+            total_students = 0
+            active_students = 0
+            for row in sheet.iter_rows(min_row=2):
+                if row[0].value:  # If there's a username
+                    total_students += 1
+                    if row[4].value == "Active":
+                        active_students += 1
+            
+            section_num = filename.replace("students", "").replace(".xlsx", "")
+            embed.add_field(
+                name=f"Section {section_num}",
+                value=f"Total Registered: {total_students}\nActive: {active_students}",
+                inline=True
+            )
+        
+        await ctx.send(embed=embed)
+        
+    except Exception as e:
+        print(f"Error getting section stats: {e}")
+        await ctx.send("An error occurred while getting section statistics.")
 
 # Load token and run bot
 load_dotenv()
