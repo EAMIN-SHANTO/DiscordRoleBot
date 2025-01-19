@@ -58,6 +58,7 @@ class VerifyModal(discord.ui.Modal):
         try:
             id_input = str(self.id_number.value)
             member = interaction.user
+            guild = interaction.guild
 
             # Check if user already has a section role
             has_section = False
@@ -68,6 +69,19 @@ class VerifyModal(discord.ui.Modal):
                         ephemeral=True
                     )
                     return
+
+            # Check if this ID is already in use by another member
+            role_to_check = ID_MAPPING.get(id_input, {}).get("role")
+            if role_to_check:
+                for guild_member in guild.members:
+                    if guild_member != member:  # Don't check the current user
+                        member_roles = [role.name for role in guild_member.roles]
+                        if role_to_check in member_roles:
+                            await interaction.response.send_message(
+                                "This ID is already verified with another user. Please contact an administrator if you think this is a mistake.",
+                                ephemeral=True
+                            )
+                            return
 
             if id_input in ID_MAPPING:
                 mapping = ID_MAPPING[id_input]
@@ -245,11 +259,37 @@ class MarksModal(discord.ui.Modal):
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
-            student_id = str(self.student_id.value)
-            print(f"Received ID: {student_id}")
+            entered_id = str(self.student_id.value).strip()
+            member = interaction.user
+            
+            # Check if the user has been verified and get their verified ID
+            verified_id = None
+            for role in member.roles:
+                if role.name in [mapping["role"] for mapping in ID_MAPPING.values()]:
+                    # Find the ID that matches this role
+                    for id_num, data in ID_MAPPING.items():
+                        if data["role"] == role.name:
+                            verified_id = id_num
+                            break
+                    break
+            
+            # If user is not verified or trying to access different ID
+            if not verified_id:
+                await interaction.response.send_message(
+                    "You need to verify yourself first using the verification system!",
+                    ephemeral=True
+                )
+                return
+            
+            if verified_id != entered_id:
+                await interaction.response.send_message(
+                    "You can only check marks for your own verified ID!",
+                    ephemeral=True
+                )
+                return
             
             # Get student information from Excel file
-            student_info = self.get_marks(student_id)
+            student_info = self.get_marks(entered_id)
             
             if student_info:
                 # Create an embed for the student information
@@ -339,6 +379,55 @@ async def setup_marks(ctx):
     except Exception as e:
         print(f"Setup error: {e}")
         await ctx.send("Error setting up marks checker. Please try again.")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def check_verifications(ctx):
+    """Shows which users are verified with which IDs"""
+    try:
+        guild = ctx.guild
+        embed = discord.Embed(
+            title="🔍 Verification Status",
+            description="List of verified users and their IDs",
+            color=discord.Color.blue()
+        )
+
+        # Create a mapping of role names to IDs for quick lookup
+        role_to_id = {data["role"]: id_num for id_num, data in ID_MAPPING.items()}
+        
+        verified_users = []
+        for member in guild.members:
+            for role in member.roles:
+                if role.name in role_to_id:
+                    verified_users.append({
+                        "member": member,
+                        "role": role.name,
+                        "id": role_to_id[role.name]
+                    })
+        
+        if verified_users:
+            # Sort by role name for better organization
+            verified_users.sort(key=lambda x: x["role"])
+            
+            # Add fields for each verified user
+            for user in verified_users:
+                embed.add_field(
+                    name=f"{user['member'].display_name}",
+                    value=f"ID: {user['id']}\nRole: {user['role']}",
+                    inline=True
+                )
+        else:
+            embed.add_field(
+                name="No Verified Users",
+                value="No users have been verified yet.",
+                inline=False
+            )
+
+        await ctx.send(embed=embed)
+
+    except Exception as e:
+        print(f"Check verifications error: {e}")
+        await ctx.send("An error occurred while checking verifications.")
 
 # Load token and run bot
 load_dotenv()
