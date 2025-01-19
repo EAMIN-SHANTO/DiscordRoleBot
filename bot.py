@@ -16,11 +16,12 @@ intents.members = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# Store ID to role mappings
-ID_ROLE_MAPPING = {
-    "12345": "Student",
-    "67890": "Teacher",
-    # Add more ID to role mappings as needed
+# Store ID to role and channel mappings
+ID_MAPPING = {
+    "12345": {"role": "Student", "channel": None},  # General student with no specific channel
+    "67890": {"role": "Teacher", "channel": None},  # General teacher with no specific channel
+    "21301429": {"role": "Section-10", "channel": "section-10"},  # Student with specific channel access
+    # Add more mappings as needed
 }
 
 @bot.event
@@ -52,45 +53,75 @@ async def on_message(message):
     await bot.process_commands(message)
 
 @bot.command()
-@commands.has_permissions(administrator=True)
-async def verify(ctx, member: discord.Member, id_number: str):
-    print(f"Verify command received: {ctx.author} trying to verify {member} with ID {id_number}")  # Debug print
+async def verify(ctx, id_number: str):
+    print(f"Verify command received: {ctx.author} trying to verify with ID {id_number}")
     
-    # Try to delete the command message
-    try:
-        await ctx.message.delete()
-    except Exception as e:
-        print(f"Could not delete command message: {e}")
+    # Get the member who used the command
+    member = ctx.author
 
-    if id_number in ID_ROLE_MAPPING:
-        role_name = ID_ROLE_MAPPING[id_number]
-        print(f"Found role mapping: {role_name}")  # Debug print
+    if id_number in ID_MAPPING:
+        mapping = ID_MAPPING[id_number]
+        role_name = mapping["role"]
+        channel_name = mapping["channel"]
         
-        # Get the role object
+        # Get or create the role
         role = discord.utils.get(ctx.guild.roles, name=role_name)
-        print(f"Found role object: {role}")  # Debug print
-        
         if role is None:
-            print("Role not found, creating new one")  # Debug print
-            role = await ctx.guild.create_role(name=role_name)
+            try:
+                print(f"Creating new role: {role_name}")
+                role = await ctx.guild.create_role(name=role_name)
+            except Exception as e:
+                print(f"Could not create role: {e}")
+                await ctx.send("Error: Could not create role. Please contact an administrator.")
+                return
         
         try:
-            # Assign the role to the member
+            # Assign the role
             await member.add_roles(role)
-            # Send message and delete after 10 seconds
-            response_msg = await ctx.send(f"Successfully verified {member.mention} and assigned {role_name} role!")
-            await asyncio.sleep(10)  # Wait for 10 seconds
+            
+            # Handle channel permissions if specified
+            if channel_name:
+                channel = discord.utils.get(ctx.guild.channels, name=channel_name)
+                if channel:
+                    try:
+                        # Set up channel permissions for the role
+                        await channel.set_permissions(role,
+                            read_messages=True,
+                            send_messages=True,
+                            read_message_history=True
+                        )
+                        response = f"Successfully verified {member.mention} and assigned {role_name} role with access to #{channel_name}!"
+                    except Exception as e:
+                        print(f"Could not set channel permissions: {e}")
+                        response = f"Role assigned but couldn't set channel permissions. Please contact an administrator."
+                else:
+                    response = f"Successfully verified {member.mention} and assigned {role_name} role!"
+            else:
+                response = f"Successfully verified {member.mention} and assigned {role_name} role!"
+            
+            # Send response message
+            response_msg = await ctx.send(response)
+            
+            # Try to delete the original command
             try:
-                await response_msg.delete()  # Delete the message
+                await ctx.message.delete()
             except Exception as e:
-                print(f"Could not delete success message: {e}")
+                print(f"Could not delete command message: {e}")
+            
+            # Try to delete the response after 10 seconds
+            try:
+                await asyncio.sleep(10)
+                await response_msg.delete()
+            except Exception as e:
+                print(f"Could not delete response message: {e}")
+                
+        except discord.Forbidden as e:
+            print(f"Permission error: {e}")
+            await ctx.send("Error: Bot doesn't have required permissions. Please contact an administrator.")
         except Exception as e:
-            print(f"Error assigning role: {e}")
-            error_msg = await ctx.send("Error assigning role!")
-            await asyncio.sleep(10)
-            await error_msg.delete()
+            print(f"Error assigning role/channel: {e}")
+            await ctx.send("An error occurred. Please contact an administrator.")
     else:
-        # Send error message and delete after 10 seconds
         error_msg = await ctx.send("Invalid ID number!")
         await asyncio.sleep(10)
         try:
@@ -102,12 +133,8 @@ async def verify(ctx, member: discord.Member, id_number: str):
 async def on_command_error(ctx, error):
     print(f"Error occurred: {str(error)}")  # Debug print
     try:
-        if isinstance(error, commands.MissingPermissions):
-            error_msg = await ctx.send("You don't have permission to use this command!")
-            await asyncio.sleep(10)
-            await error_msg.delete()
-        elif isinstance(error, commands.MissingRequiredArgument):
-            error_msg = await ctx.send("Missing required arguments! Usage: !verify @user ID_NUMBER")
+        if isinstance(error, commands.MissingRequiredArgument):
+            error_msg = await ctx.send("Missing required arguments! Usage: !verify ID_NUMBER")
             await asyncio.sleep(10)
             await error_msg.delete()
         
