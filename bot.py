@@ -57,13 +57,32 @@ async def on_message(message):
 @bot.command()
 async def verify(ctx, id_number: str):
     print(f"Verify command received: {ctx.author} trying to verify with ID {id_number}")
-    print(f"Available IDs: {list(ID_MAPPING.keys())}")  # Debug print to see available IDs
+    print(f"Available IDs: {list(ID_MAPPING.keys())}")
     
     # Convert ID to string to ensure consistent comparison
     id_number = str(id_number)
     
     # Get the member who used the command
     member = ctx.author
+
+    # Check if user already has a section role
+    has_section = False
+    section_role = None
+    for role in member.roles:
+        if role.name.startswith("Section-"):
+            has_section = True
+            section_role = role
+            break
+
+    if has_section:
+        error_msg = await ctx.send(f"You are already assigned to {section_role.name}. You cannot be in multiple sections!")
+        await asyncio.sleep(10)
+        try:
+            await error_msg.delete()
+            await ctx.message.delete()
+        except Exception as e:
+            print(f"Could not delete message: {e}")
+        return
 
     if id_number in ID_MAPPING:
         mapping = ID_MAPPING[id_number]
@@ -142,7 +161,30 @@ async def verify(ctx, id_number: str):
                 await response_msg.delete()
             except Exception as e:
                 print(f"Could not delete response message: {e}")
+
+            # Get the verification channel (current channel where command was used)
+            verification_channel = ctx.channel
+            
+            # Set default permissions for verification channel
+            await verification_channel.set_permissions(ctx.guild.default_role,
+                read_messages=True,    # Everyone can see the channel by default
+                send_messages=True     # Everyone can send messages by default
+            )
+
+            # Only hide the channel from users who have section roles
+            for member in ctx.guild.members:
+                has_section = False
+                for role in member.roles:
+                    if role.name.startswith("Section-"):
+                        has_section = True
+                        break
                 
+                if has_section:
+                    await verification_channel.set_permissions(member,
+                        read_messages=False,
+                        send_messages=False
+                    )
+
         except discord.Forbidden as e:
             print(f"Permission error: {e}")
             await ctx.send("Error: Bot doesn't have required permissions. Please contact an administrator.")
@@ -173,6 +215,27 @@ async def on_command_error(ctx, error):
             print(f"Could not delete command message: {e}")
     except Exception as e:
         print(f"Error in error handling: {e}")
+
+@bot.event
+async def on_member_update(before, after):
+    # Check if roles were removed
+    removed_roles = set(before.roles) - set(after.roles)
+    
+    if removed_roles:
+        has_section = False
+        for role in after.roles:
+            if role.name.startswith("Section-"):
+                has_section = True
+                break
+        
+        # If user has no section roles, show verification channel
+        if not has_section:
+            verification_channel = discord.utils.get(after.guild.channels, name="verification")
+            if verification_channel:
+                await verification_channel.set_permissions(after,
+                    read_messages=True,
+                    send_messages=True
+                )
 
 # Load token and run bot
 load_dotenv()
