@@ -2,3 +2,5 @@
 !setup_verification
 !setup_marks
 
+!section_stats
+!section_stats 10
