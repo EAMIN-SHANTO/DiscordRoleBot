@@ -21,6 +21,8 @@ ID_MAPPING = {
     "12345": {"role": "Student", "channel": None},  # General student with no specific channel
     "67890": {"role": "Teacher", "channel": None},  # General teacher with no specific channel
     "21301429": {"role": "Section-10", "channel": "section-10"},  # Student with specific channel access
+    "2221021": {"role": "Section-11", "channel": "section-11"},  # Section 11 student
+    "2221023": {"role": "Section-11", "channel": "section-11"},  # Section 11 student
     # Add more mappings as needed
 }
 
@@ -55,6 +57,10 @@ async def on_message(message):
 @bot.command()
 async def verify(ctx, id_number: str):
     print(f"Verify command received: {ctx.author} trying to verify with ID {id_number}")
+    print(f"Available IDs: {list(ID_MAPPING.keys())}")  # Debug print to see available IDs
+    
+    # Convert ID to string to ensure consistent comparison
+    id_number = str(id_number)
     
     # Get the member who used the command
     member = ctx.author
@@ -82,9 +88,33 @@ async def verify(ctx, id_number: str):
             # Handle channel permissions if specified
             if channel_name:
                 channel = discord.utils.get(ctx.guild.channels, name=channel_name)
-                if channel:
+                
+                # Create the channel if it doesn't exist
+                if channel is None:
                     try:
-                        # Set up channel permissions for the role
+                        # Create a new text channel in the server
+                        overwrites = {
+                            ctx.guild.default_role: discord.PermissionOverwrite(read_messages=False),
+                            role: discord.PermissionOverwrite(
+                                read_messages=True,
+                                send_messages=True,
+                                read_message_history=True
+                            )
+                        }
+                        
+                        channel = await ctx.guild.create_text_channel(
+                            channel_name,
+                            overwrites=overwrites,
+                            reason=f"Auto-created for {role_name}"
+                        )
+                        print(f"Created new channel: {channel_name}")
+                        response = f"Successfully verified {member.mention}, assigned {role_name} role, and created new channel #{channel_name}!"
+                    except Exception as e:
+                        print(f"Could not create channel: {e}")
+                        response = f"Role assigned but couldn't create channel. Please contact an administrator."
+                else:
+                    try:
+                        # Set permissions for existing channel
                         await channel.set_permissions(role,
                             read_messages=True,
                             send_messages=True,
@@ -94,8 +124,6 @@ async def verify(ctx, id_number: str):
                     except Exception as e:
                         print(f"Could not set channel permissions: {e}")
                         response = f"Role assigned but couldn't set channel permissions. Please contact an administrator."
-                else:
-                    response = f"Successfully verified {member.mention} and assigned {role_name} role!"
             else:
                 response = f"Successfully verified {member.mention} and assigned {role_name} role!"
             
