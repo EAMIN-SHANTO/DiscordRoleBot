@@ -7,6 +7,7 @@ import os
 from dotenv import load_dotenv
 import logging
 import asyncio  # Add this import for sleep
+import openpyxl  # Add this import at the top
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -176,7 +177,7 @@ async def setup_verification(ctx):
     except Exception as e:
         print(f"Setup error: {e}")
         await ctx.send("Error setting up verification. Please try again.")
-
+        
 @bot.event
 async def on_command_error(ctx, error):
     print(f"Error occurred: {str(error)}")  # Debug print
@@ -214,6 +215,130 @@ async def on_member_update(before, after):
                     read_messages=True,
                     send_messages=True
                 )
+
+# Add this class for the Marks button
+class MarksView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+    
+    @discord.ui.button(label="Check Marks", style=discord.ButtonStyle.primary, custom_id="marks_button")
+    async def marks_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        try:
+            modal = MarksModal()
+            await interaction.response.send_modal(modal)
+        except Exception as e:
+            print(f"Marks button error: {e}")
+            await interaction.response.send_message("An error occurred. Please try again.", ephemeral=True)
+
+# Add this class for the Marks modal
+class MarksModal(discord.ui.Modal):
+    def __init__(self):
+        super().__init__(title="Check Marks")
+        self.student_id = discord.ui.TextInput(
+            label="Enter your Student ID",
+            placeholder="Enter your ID number here...",
+            required=True,
+            min_length=4,
+            max_length=10
+        )
+        self.add_item(self.student_id)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            student_id = str(self.student_id.value)
+            print(f"Received ID: {student_id}")
+            
+            # Get student information from Excel file
+            student_info = self.get_marks(student_id)
+            
+            if student_info:
+                # Create an embed for the student information
+                embed = discord.Embed(
+                    title="📊 Student Information",
+                    color=discord.Color.green()
+                )
+                
+                # Add all fields
+                embed.add_field(name="Name", value=student_info["Name"], inline=False)
+                embed.add_field(name="ID", value=student_info["ID"], inline=True)
+                embed.add_field(name="G-suit", value=student_info["G-suit"], inline=True)
+                embed.add_field(name="Section", value=student_info["Section"], inline=True)
+                embed.add_field(name="Marks", value=student_info["Marks"], inline=False)
+                
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+            else:
+                await interaction.response.send_message(
+                    "No information found for this ID. Please check your ID and try again.",
+                    ephemeral=True
+                )
+
+        except Exception as e:
+            print(f"Marks fetch error: {e}")
+            await interaction.response.send_message(
+                "An error occurred while fetching information. Please try again later.",
+                ephemeral=True
+            )
+
+    def get_marks(self, student_id):
+        try:
+            print(f"Current working directory: {os.getcwd()}")
+            print(f"Looking for file: markst.xlsx")
+            
+            # Load the Excel file
+            wb = openpyxl.load_workbook('markst.xlsx')
+            sheet = wb.active
+            
+            # Convert student_id to string and remove any whitespace
+            student_id = str(student_id).strip()
+            print(f"Searching for Student ID: {student_id}")
+            
+            # Find the student's information
+            for row in sheet.iter_rows(min_row=2):  # Start from second row
+                cell_value = str(row[0].value).strip() if row[0].value is not None else ""
+                if cell_value == student_id:
+                    # Found the student, get all their information
+                    student_info = {
+                        "Name": str(row[1].value) if row[1].value is not None else "N/A",
+                        "ID": str(row[0].value) if row[0].value is not None else "N/A",
+                        "G-suit": str(row[2].value) if row[2].value is not None else "N/A",
+                        "Section": str(row[3].value) if row[3].value is not None else "N/A",
+                        "Marks": str(row[4].value) if row[4].value is not None else "N/A"
+                    }
+                    print(f"Found student info: {student_info}")
+                    return student_info
+
+            print(f"No information found for ID: {student_id}")
+            return None
+
+        except Exception as e:
+            print(f"Excel read error: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+# Add this new command for setting up the marks checker
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def setup_marks(ctx):
+    """Sets up the marks checking message with button"""
+    embed = discord.Embed(
+        title="📊 Check Your Marks",
+        description=(
+            "To check your quiz marks:\n\n"
+            "1. Click the 'Check Marks' button below\n"
+            "2. Enter your Student ID when prompted\n"
+            "3. Your marks will be shown privately\n\n"
+            "**Note:** Only you can see your marks."
+        ),
+        color=discord.Color.blue()
+    )
+    
+    try:
+        view = MarksView()
+        await ctx.send(embed=embed, view=view)
+    except Exception as e:
+        print(f"Setup error: {e}")
+        await ctx.send("Error setting up marks checker. Please try again.")
 
 # Load token and run bot
 load_dotenv()
